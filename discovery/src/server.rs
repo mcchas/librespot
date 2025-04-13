@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
+    // net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
+    net::{Ipv4Addr, SocketAddr, TcpListener},
     sync::{Arc, Mutex},
 };
 
@@ -271,7 +272,8 @@ impl DiscoveryServer {
             SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)
         } else {
             // this creates a dual stack socket on non-windows systems
-            SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), *port)
+            // SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), *port)
+            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)
         };
 
         let (close_tx, close_rx) = oneshot::channel();
