@@ -1,5 +1,5 @@
-use crate::state::provider::IsProvider;
 use crate::state::ConnectState;
+use crate::state::provider::IsProvider;
 use librespot_protocol::player::Restrictions;
 use protobuf::MessageField;
 
@@ -7,14 +7,13 @@ impl ConnectState {
     pub fn clear_restrictions(&mut self) {
         let player = self.player_mut();
 
-        player.restrictions.clear();
-        player.context_restrictions.clear();
+        player.context_restrictions = Some(Default::default()).into();
+        player.restrictions = Some(Default::default()).into();
     }
 
     pub fn update_restrictions(&mut self) {
         const NO_PREV: &str = "no previous tracks";
         const AUTOPLAY: &str = "autoplay";
-        const ENDLESS_CONTEXT: &str = "endless_context";
 
         let prev_tracks_is_empty = self.prev_tracks().is_empty();
 
@@ -51,8 +50,6 @@ impl ConnectState {
                 restrictions.disallow_toggling_shuffle_reasons = vec![AUTOPLAY.to_string()];
                 restrictions.disallow_toggling_repeat_context_reasons = vec![AUTOPLAY.to_string()];
                 restrictions.disallow_toggling_repeat_track_reasons = vec![AUTOPLAY.to_string()];
-            } else if player.options.repeating_context {
-                restrictions.disallow_toggling_shuffle_reasons = vec![ENDLESS_CONTEXT.to_string()]
             } else {
                 restrictions.disallow_toggling_shuffle_reasons.clear();
                 restrictions

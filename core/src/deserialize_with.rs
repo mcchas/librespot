@@ -1,5 +1,5 @@
-use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use protobuf::MessageFull;
 use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer};
@@ -35,11 +35,7 @@ where
     D: Deserializer<'de>,
 {
     let v: Value = Deserialize::deserialize(de)?;
-    parse_value_to_msg(&v).map_err(|why| {
-        warn!("deserialize_json_proto: {v}");
-        error!("deserialize_json_proto: {why}");
-        Error::custom(why)
-    })
+    parse_value_to_msg(&v).map_err(Error::custom)
 }
 
 pub fn option_json_proto<'de, T, D>(de: D) -> Result<Option<T>, D::Error>

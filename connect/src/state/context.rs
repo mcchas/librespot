@@ -1,5 +1,5 @@
 use crate::{
-    core::{Error, SpotifyId},
+    core::{Error, SpotifyId, SpotifyUri},
     protocol::{
         context::Context,
         context_page::ContextPage,
@@ -9,9 +9,9 @@ use crate::{
     },
     shuffle_vec::ShuffleVec,
     state::{
+        ConnectState, SPOTIFY_MAX_NEXT_TRACKS_SIZE, StateError,
         metadata::Metadata,
         provider::{IsProvider, Provider},
-        ConnectState, StateError, SPOTIFY_MAX_NEXT_TRACKS_SIZE,
     },
 };
 use protobuf::MessageField;
@@ -24,7 +24,6 @@ const SEARCH_IDENTIFIER: &str = "spotify:search";
 #[derive(Debug)]
 pub struct StateContext {
     pub tracks: ShuffleVec<ProvidedTrack>,
-    pub skip_track: Option<ProvidedTrack>,
     pub metadata: HashMap<String, String>,
     pub restrictions: Option<Restrictions>,
     /// is used to keep track which tracks are already loaded into the next_tracks
@@ -108,6 +107,7 @@ impl ConnectState {
 
         if let Ok(ctx) = self.get_context_mut(ContextType::Default) {
             ctx.remove_shuffle_seed();
+            ctx.remove_initial_track();
             ctx.tracks.unshuffle()
         }
 
@@ -116,6 +116,10 @@ impl ConnectState {
             ResetContext::Completely => {
                 self.context = None;
                 self.autoplay_context = None;
+
+                let player = self.player_mut();
+                player.context_uri.clear();
+                player.context_url.clear();
             }
             ResetContext::DefaultIndex => {
                 for ctx in [self.context.as_mut(), self.autoplay_context.as_mut()]
@@ -141,14 +145,13 @@ impl ConnectState {
         }
     }
 
-    pub fn get_context_uri_from_context(context: &Context) -> Option<&str> {
-        let uri = context.uri.as_deref().unwrap_or_default();
-        Self::valid_resolve_uri(uri).or_else(|| {
-            context
-                .pages
-                .first()
-                .and_then(|p| p.tracks.first().and_then(|t| t.uri.as_deref()))
-        })
+    pub fn find_valid_uri<'s>(
+        context_uri: Option<&'s str>,
+        first_page: Option<&'s ContextPage>,
+    ) -> Option<&'s str> {
+        context_uri
+            .and_then(Self::valid_resolve_uri)
+            .or_else(|| first_page.and_then(|p| p.tracks.first().and_then(|t| t.uri.as_deref())))
     }
 
     pub fn set_active_context(&mut self, new_context: ContextType) {
@@ -157,7 +160,8 @@ impl ConnectState {
         let player = self.player_mut();
 
         player.context_metadata = Default::default();
-        player.restrictions = Some(Default::default()).into();
+        player.context_restrictions = MessageField::some(Default::default());
+        player.restrictions = MessageField::some(Default::default());
 
         let ctx = match self.get_context(new_context) {
             Err(why) => {
@@ -190,7 +194,7 @@ impl ConnectState {
             error!("context didn't have any tracks: {context:#?}");
             Err(StateError::ContextHasNoTracks)?;
         } else if matches!(context.uri, Some(ref uri) if uri.starts_with(LOCAL_FILES_IDENTIFIER)) {
-            Err(StateError::UnsupportedLocalPlayBack)?;
+            Err(StateError::UnsupportedLocalPlayback)?;
         }
 
         let mut next_contexts = Vec::new();
@@ -373,30 +377,29 @@ impl ConnectState {
 
         StateContext {
             tracks: tracks.into(),
-            skip_track: None,
             restrictions,
             metadata,
             index: ContextIndex::new(),
         }
     }
 
-    pub fn is_skip_track(&self, track: &ProvidedTrack) -> bool {
-        self.get_context(self.active_context)
-            .ok()
-            .and_then(|t| t.skip_track.as_ref().map(|t| t.uri == track.uri))
-            .unwrap_or(false)
-    }
+    pub fn is_skip_track(&self, track: &ProvidedTrack, iteration: Option<u32>) -> bool {
+        let ctx = match self.get_context(self.active_context).ok() {
+            None => return false,
+            Some(ctx) => ctx,
+        };
 
-    pub fn merge_context(&mut self, context: Option<Context>) -> Option<()> {
-        let mut context = context?;
-        if matches!(context.uri, Some(ref uri) if uri != self.context_uri()) {
-            return None;
+        if ctx.get_initial_track().is_none_or(|uri| uri != &track.uri) {
+            return false;
         }
 
-        let current_context = self.get_context_mut(ContextType::Default).ok()?;
-        let new_page = context.pages.pop()?;
+        iteration.is_none_or(|i| i == 0)
+    }
 
-        for new_track in new_page.tracks {
+    pub fn merge_context(&mut self, new_page: Option<ContextPage>) -> Option<()> {
+        let current_context = self.get_context_mut(ContextType::Default).ok()?;
+
+        for new_track in new_page?.tracks {
             if new_track.uri.is_none() || matches!(new_track.uri, Some(ref uri) if uri.is_empty()) {
                 continue;
             }
@@ -446,8 +449,10 @@ impl ConnectState {
             (Some(uri), _) if uri.contains(['?', '%']) => {
                 Err(StateError::InvalidTrackUri(Some(uri.clone())))?
             }
-            (Some(uri), _) if !uri.is_empty() => SpotifyId::from_uri(uri)?,
-            (_, Some(gid)) if !gid.is_empty() => SpotifyId::from_raw(gid)?,
+            (Some(uri), _) if !uri.is_empty() => SpotifyUri::from_uri(uri)?,
+            (_, Some(gid)) if !gid.is_empty() => SpotifyUri::Track {
+                id: SpotifyId::from_raw(gid)?,
+            },
             _ => Err(StateError::InvalidTrackUri(None))?,
         };
 

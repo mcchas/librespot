@@ -4,7 +4,7 @@ use crate::{
         autoplay_context_request::AutoplayContextRequest, context::Context,
         transfer_state::TransferState,
     },
-    state::{context::ContextType, ConnectState},
+    state::{ConnectState, context::ContextType},
 };
 use std::{
     cmp::PartialEq,
@@ -76,7 +76,9 @@ impl ResolveContext {
         // otherwise we might not even check if we need to fallback and just use the fallback uri
         match self.resolve {
             Resolve::Uri(ref uri) => ConnectState::valid_resolve_uri(uri),
-            Resolve::Context(ref ctx) => ConnectState::get_context_uri_from_context(ctx),
+            Resolve::Context(ref ctx) => {
+                ConnectState::find_valid_uri(ctx.uri.as_deref(), ctx.pages.first())
+            }
         }
         .or(self.fallback.as_deref())
     }
@@ -260,7 +262,7 @@ impl ContextResolver {
             ContextAction::Replace => {
                 let remaining = state.update_context(context, next.update);
                 if let Resolve::Context(ref ctx) = next.resolve {
-                    state.merge_context(Some(ctx.clone()));
+                    state.merge_context(ctx.pages.clone().pop());
                 }
 
                 remaining
@@ -316,8 +318,8 @@ impl ContextResolver {
         let active_ctx = state.get_context(state.active_context);
         let res = if let Some(transfer_state) = transfer_state.take() {
             state.finish_transfer(transfer_state)
-        } else if state.shuffling_context() {
-            state.shuffle(None)
+        } else if state.shuffling_context() && next.update == ContextType::Default {
+            state.shuffle_new()
         } else if matches!(active_ctx, Ok(ctx) if ctx.index.track == 0) {
             // has context, and context is not touched
             // when the index is not zero, the next index was already evaluated elsewhere
